@@ -1,0 +1,90 @@
+#!/bin/sh
+# rpcd backend for luci-app-simswitch: get, switch, job.
+#
+# get     returns the cached reading; a stale reading is refreshed detached,
+#         so the page never waits for the AT channel.
+# switch  starts the adapter detached (10-40 s) and returns at once.
+# job     returns the last switch state.
+
+SELF=${0%/*}
+LIB=$SELF/../../share/simswitch/lib.sh
+[ -f "$LIB" ] || LIB=/usr/share/simswitch/lib.sh
+. "$LIB"
+
+SIM=${SIMSWITCH_BIN:-/usr/libexec/simswitch/switch}
+RUNDIR=${SIMSWITCH_RUN:-/var/run/simswitch}
+
+refuse() {
+    if [ -n "${2:-}" ]; then
+        printf '{"ok":0,"error":%s,"detail":%s}\n' "$(json_str "$1")" "$(json_str "$2")"
+    else
+        printf '{"ok":0,"error":%s}\n' "$(json_str "$1")"
+    fi
+}
+
+reply() {
+    case $1 in
+        '{'*'}') printf '%s\n' "$1" ;;
+        *) refuse 'The switch adapter gave no valid reply' ;;
+    esac
+}
+
+do_list() {
+    cat <<'EOF'
+{
+	"get": { },
+	"switch": { "code": "String" },
+	"job": { }
+}
+EOF
+}
+
+m_get() {
+    local ttl age n
+    ttl=$(uci_get cache_ttl); case $ttl in ''|*[!0-9]*) ttl=120 ;; esac
+    [ "$(cat "$RUNDIR/state/read_ok" 2>/dev/null)" = 1 ] || ttl=10
+    age=-1
+    [ -s "$RUNDIR/state/ts" ] && age=$(( $(date +%s) - $(cat "$RUNDIR/state/ts" 2>/dev/null || echo 0) ))
+    if [ "$age" -lt 0 ] || [ "$age" -gt "$ttl" ]; then
+        setsid "$SIM" get >/dev/null 2>&1 &
+        if [ "$age" -lt 0 ]; then
+            n=0
+            while [ "$n" -lt 6 ] && [ ! -s "$RUNDIR/state/ts" ]; do
+                sleep 1
+                n=$((n + 1))
+            done
+        fi
+    fi
+    reply "$("$SIM" get cached 2>/dev/null)"
+}
+
+m_switch() {
+    local code
+    code=$(printf '%s' "$INPUT" | jsonfilter -e '@.code' 2>/dev/null)
+    profile_code_ok "$code" || { refuse 'The profile code is four digits'; return; }
+    [ "$(uci_get enabled)" = 0 ] && { refuse 'The switch is disabled'; return; }
+    profile_find "$code" || { refuse 'This profile code is not configured'; return; }
+    lock_live "$RUNDIR/switch.lock" && { refuse 'A switch is already running'; return; }
+    setsid "$SIM" switch "$code" </dev/null >/dev/null 2>&1 &
+    printf '{"ok":1,"started":1}\n'
+}
+
+m_job() { reply "$("$SIM" status 2>/dev/null)"; }
+
+case "${1:-}" in
+    list)
+        do_list
+        ;;
+    call)
+        INPUT=$(cat 2>/dev/null)
+        case "${2:-}" in
+            get)    m_get ;;
+            switch) m_switch ;;
+            job)    m_job ;;
+            *)      refuse 'Unknown method' ;;
+        esac
+        ;;
+    *)
+        exit 2
+        ;;
+esac

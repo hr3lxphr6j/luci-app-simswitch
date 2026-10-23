@@ -1,0 +1,388 @@
+#!/bin/sh
+# simswitch -- switch between the operator profiles stored on a SIM card.
+#
+#   simswitch get [cached]   one JSON object: the current profile, the SIM
+#                            identity and the configured profiles.
+#   simswitch switch CODE    switch to CODE (four digits, must be configured).
+#                            Synchronous and slow: the rpcd backend starts it
+#                            detached. One switch at a time.
+#   simswitch status         the last switch, as JSON.
+#   simswitch log [N]        the switch log (default: the last 40 lines).
+#
+# Exit: 0 ok, 1 failed, 2 bad usage, 3 busy (another switch holds the lock).
+
+export PATH="$PATH:/usr/sbin:/sbin"
+
+SELF=${0%/*}
+LIB=$SELF/../../share/simswitch/lib.sh
+[ -f "$LIB" ] || LIB=/usr/share/simswitch/lib.sh
+. "$LIB"
+
+AT=${SIMSWITCH_AT:-/usr/libexec/simswitch/at}
+RUNDIR=${SIMSWITCH_RUN:-/var/run/simswitch}
+STATE=$RUNDIR/state
+STATUS=$RUNDIR/status.json
+LOCK=$RUNDIR/switch.lock
+GETLOCK=$RUNDIR/get.lock
+LOG=$RUNDIR/log
+
+num_or() { case $1 in ''|*[!0-9]*) printf '%s\n' "$2" ;; *) printf '%s\n' "$1" ;; esac; }
+
+ENABLED=$(uci_get enabled); case $ENABLED in 0) ENABLED=0 ;; *) ENABLED=1 ;; esac
+IFACE=$(safe_iface "$(uci_get iface)" wan)
+REDIAL=$(uci_get redial); case $REDIAL in ''|*[!0-9]*) REDIAL=1 ;; esac
+SWITCH_CMD=$(uci_get switch_command)
+[ -n "$SWITCH_CMD" ] || SWITCH_CMD='AT+CLCK="SC",1,"%s"'
+WAIT_REFRESH=$(num_or "$(uci_get wait_refresh)" 45)
+WAIT_JOIN=$(num_or "$(uci_get wait_join)" 60)
+WAIT_WAN=$(num_or "$(uci_get wait_wan)" 60)
+CACHE_TTL=$(num_or "$(uci_get cache_ttl)" 120)
+[ -n "${SIMSWITCH_WAIT_REFRESH:-}" ] && WAIT_REFRESH=$(num_or "$SIMSWITCH_WAIT_REFRESH" 45)
+[ -n "${SIMSWITCH_WAIT_JOIN:-}" ] && WAIT_JOIN=$(num_or "$SIMSWITCH_WAIT_JOIN" 60)
+[ -n "${SIMSWITCH_WAIT_WAN:-}" ] && WAIT_WAN=$(num_or "$SIMSWITCH_WAIT_WAN" 60)
+[ -n "${SIMSWITCH_CACHE_TTL:-}" ] && CACHE_TTL=$(num_or "$SIMSWITCH_CACHE_TTL" 120)
+
+umask 077
+ensure_dir "$RUNDIR" || exit 1
+ensure_dir "$STATE" || exit 1
+
+now() { date +%s; }
+nap() { sleep "$1" 2>/dev/null || sleep 1; }
+say() {
+    [ -n "${SIMSWITCH_QUIET:-}" ] || printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG" 2>/dev/null
+    logger -t simswitch "$*" 2>/dev/null
+    [ -f "$LOG" ] && { tail -n 200 "$LOG" > "$LOG.t" 2>/dev/null && mv "$LOG.t" "$LOG"; }
+}
+
+# ------------------------------------------------------------------ AT
+atq() {
+    _t=${2:-8}
+    "$AT" -t "$_t" "$1" 2>/dev/null | tr -d '\r'
+}
+
+parse_iccid() {
+    _v=$(printf '%s\n' "$1" | sed -n 's/^[+]*I*CCID:[[:space:]]*//p' | tr -d ' "' |
+        grep -Eo '[0-9]{18,20}' | head -n 1)
+    [ -n "$_v" ] || _v=$(printf '%s\n' "$1" | grep -Eo '(^|[^0-9])[0-9]{18,20}([^0-9]|$)' |
+        grep -Eo '[0-9]{18,20}' | head -n 1)
+    printf '%s' "$_v"
+}
+
+parse_imsi() {
+    _v=$(printf '%s\n' "$1" | sed -n 's/^[+]*CIMI:[[:space:]]*//p' | tr -d ' "' |
+        grep -Eo '[0-9]{14,16}' | head -n 1)
+    [ -n "$_v" ] || _v=$(printf '%s\n' "$1" | grep -Eo '(^|[^0-9])[0-9]{14,16}([^0-9]|$)' |
+        grep -Eo '[0-9]{14,16}' | head -n 1)
+    printf '%s' "$_v"
+}
+
+parse_cops() {
+    printf '%s\n' "$1" | sed -n 's/^+COPS:[^"]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+parse_line() {
+    printf '%s\n' "$2" | sed -n "s/^+$1:[[:space:]]*//p" | tr -d ' "' | head -n 1
+}
+
+read_iccid() {
+    _o=$(atq 'AT+CCID' 8); _v=$(parse_iccid "$_o")
+    [ -n "$_v" ] || { _o=$(atq 'AT+ICCID' 8); _v=$(parse_iccid "$_o"); }
+    printf '%s' "$_v"
+}
+
+read_imsi() { printf '%s' "$(parse_imsi "$(atq 'AT+CIMI' 8)")"; }
+read_cops() { printf '%s' "$(parse_cops "$(atq 'AT+COPS?' 8)")"; }
+
+# match_code ICCID IMSI COPS: the code of the first profile whose MATCH
+# patterns hit one of the three, or nothing
+match_code() {
+    local iccid=$1 imsi=$2 cops=$3 s c m old p
+    for s in $(profile_sections); do
+        c=$(profile_get "$s" code)
+        profile_code_ok "$c" || continue
+        m=$(profile_get "$s" match)
+        [ -n "$m" ] || continue
+        old=$IFS; IFS=,
+        for p in $m; do
+            [ -n "$p" ] || continue
+            case $p in *'['*|*']'*|*'|'*|*')'*) continue ;; esac
+            if [ -n "$iccid" ]; then case $iccid in $p) IFS=$old; printf '%s' "$c"; return 0 ;; esac; fi
+            if [ -n "$imsi" ]; then case $imsi in $p) IFS=$old; printf '%s' "$c"; return 0 ;; esac; fi
+            if [ -n "$cops" ]; then case $cops in $p) IFS=$old; printf '%s' "$c"; return 0 ;; esac; fi
+        done
+        IFS=$old
+    done
+    return 1
+}
+
+# ------------------------------------------------------------- state files
+st_get() { cat "$STATE/$1" 2>/dev/null; }
+st_set() {
+    printf '%s' "$2" > "$STATE/$1.part" 2>/dev/null && mv "$STATE/$1.part" "$STATE/$1" 2>/dev/null
+}
+
+refresh() {
+    local out iccid imsi cops sim lock code
+    out=$(atq 'AT+CCID' 8); iccid=$(parse_iccid "$out")
+    [ -n "$iccid" ] || { out=$(atq 'AT+ICCID' 8); iccid=$(parse_iccid "$out"); }
+    imsi=$(parse_imsi "$(atq 'AT+CIMI' 8)")
+    cops=$(parse_cops "$(atq 'AT+COPS?' 8)")
+    sim=$(parse_line CPIN "$(atq 'AT+CPIN?' 8)")
+    lock=$(parse_line CLCK "$(atq 'AT+CLCK="SC",2' 8)")
+    case $lock in 0|1) ;; *) lock=-1 ;; esac
+    code=$(match_code "$iccid" "$imsi" "$cops")
+    [ -z "$iccid" ] || st_set iccid "$iccid"
+    [ -z "$imsi" ] || st_set imsi "$imsi"
+    [ -z "$cops" ] || st_set cops "$cops"
+    [ -z "$sim" ] || st_set sim "$sim"
+    st_set lock "$lock"
+    if [ -n "$iccid" ] || [ -n "$imsi" ] || [ -n "$cops" ]; then
+        st_set code "$code"
+        st_set read_ok 1
+    else
+        st_set read_ok 0
+    fi
+    st_set ts "$(now)"
+}
+
+status_json() {
+    if [ -s "$STATUS" ]; then
+        if grep -q '"running":1' "$STATUS" 2>/dev/null && ! lock_live "$LOCK"; then
+            printf '{"running":0,"ok":0,"phase":"failed","error":"The switch was interrupted"}\n'
+            return
+        fi
+        cat "$STATUS"
+    else
+        printf '{"running":0,"ok":1,"phase":"idle"}\n'
+    fi
+}
+
+emit() {
+    local s c l configured=0 busy=0 profiles=""
+    for s in $(profile_sections); do
+        c=$(profile_get "$s" code); profile_code_ok "$c" || continue
+        l=$(profile_label "$s")
+        configured=1
+        profiles="${profiles:+$profiles,}{\"code\":$(json_str "$c"),\"label\":$(json_str "$l")}"
+    done
+    lock_live "$LOCK" && busy=1
+    local iccid imsi cops sim lock code name
+    iccid=$(st_get iccid); imsi=$(st_get imsi); cops=$(st_get cops)
+    sim=$(st_get sim); lock=$(st_get lock); code=$(st_get code)
+    [ -n "$lock" ] || lock=-1
+    name=
+    if [ -n "$code" ]; then
+        name=$(profile_label_by_code "$code") || name="$code"
+    else
+        name=$cops
+    fi
+    printf '{"ok":1,"enabled":%d,"configured":%d,"current":{"code":%s,"name":%s,"iccid":%s,"imsi":%s,"cops":%s,"sim":%s,"lock":%s},"profiles":[%s],"busy":%d,"job":%s}\n' \
+        "$ENABLED" "$configured" \
+        "$(json_str_or_null "$code")" "$(json_str "$name")" \
+        "$(json_str "$iccid")" "$(json_str "$imsi")" "$(json_str "$cops")" \
+        "$(json_str "$sim")" "$lock" "$profiles" "$busy" "$(status_json)"
+}
+
+# ------------------------------------------------------------------ WAN
+wan_up() {
+    command -v ubus >/dev/null 2>&1 || return 1
+    _s=$(ubus call "network.interface.$IFACE" status 2>/dev/null) || return 1
+    if command -v jsonfilter >/dev/null 2>&1; then
+        [ "$(printf '%s' "$_s" | jsonfilter -e '@.up' 2>/dev/null)" = true ] || return 1
+        [ -n "$(printf '%s' "$_s" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)" ]
+    else
+        printf '%s' "$_s" | grep -Eq '"up"[[:space:]]*:[[:space:]]*true' &&
+            printf '%s' "$_s" | grep -q 'ipv4-address'
+    fi
+}
+
+wait_wan() {
+    local i=0
+    while [ "$i" -lt "$1" ]; do
+        wan_up && return 0
+        nap 2
+        i=$((i + 2))
+    done
+    return 1
+}
+
+# ------------------------------------------------------------- status
+status_write() {
+    _phase=$1; _ok=$2; _err=${3:-}; _running=1
+    case $_phase in done|failed) _running=0 ;; esac
+    _data=0; wan_up && _data=1
+    printf '{"running":%d,"ok":%d,"phase":%s,"code":%s,"from":%s,"before":%s,"after":%s,"error":%s,"elapsed":%d,"data":%d,"ts":%d}\n' \
+        "$_running" "$_ok" "$(json_str "$_phase")" "$(json_str "${SW_CODE:-}")" \
+        "$(json_str "${SW_FROM:-}")" "$(json_str "${SW_BEFORE_ICCID:-}")" \
+        "$(json_str "${SW_AFTER:-$(st_get iccid)}")" "$(json_str "$_err")" \
+        "$(( $(now) - ${SW_T0:-$(now)} ))" "$_data" "$(now)" \
+        > "$STATUS.part" 2>/dev/null && mv "$STATUS.part" "$STATUS" 2>/dev/null
+}
+
+refuse() {
+    status_write failed 0 "$1"
+    if [ -n "${2:-}" ]; then
+        printf '{"ok":0,"phase":"failed","error":%s,"detail":%s}\n' "$(json_str "$1")" "$(json_str "$2")"
+    else
+        printf '{"ok":0,"phase":"failed","error":%s}\n' "$(json_str "$1")"
+    fi
+    say "switch ${SW_CODE:-?} failed: $1${2:+ ($2)}"
+    exit 1
+}
+
+# ------------------------------------------------------------------ lock
+lock_acquire() {
+    if mkdir "$LOCK" 2>/dev/null; then printf '%s' "$$" > "$LOCK/pid"; return 0; fi
+    _p=$(cat "$LOCK/pid" 2>/dev/null)
+    if [ -n "$_p" ] && ! kill -0 "$_p" 2>/dev/null; then
+        rm -f "$LOCK/pid" 2>/dev/null
+        rmdir "$LOCK" 2>/dev/null
+        if mkdir "$LOCK" 2>/dev/null; then printf '%s' "$$" > "$LOCK/pid"; return 0; fi
+    fi
+    return 1
+}
+release_lock() {
+    [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] || return 0
+    rm -f "$LOCK/pid" 2>/dev/null
+    rmdir "$LOCK" 2>/dev/null
+}
+
+# ------------------------------------------------------------------ switch
+wait_identity() {
+    local limit=$1 biccid=$2 bimsi=$3 i=0 c m
+    while [ "$i" -lt "$limit" ]; do
+        c=$(read_iccid); m=$(read_imsi)
+        if [ -n "$biccid" ]; then
+            [ -n "$c" ] && [ "$c" != "$biccid" ] && { printf '%s' "$c"; return 0; }
+        else
+            [ -n "$m" ] && [ "$m" != "$bimsi" ] && { printf '%s' "$m"; return 0; }
+        fi
+        nap 2; i=$((i + 2))
+    done
+    return 1
+}
+
+cmd_switch() {
+    SW_CODE=${1:-}
+    profile_code_ok "$SW_CODE" || { echo '{"ok":0,"error":"The profile code is four digits"}' >&2; exit 2; }
+    [ "$ENABLED" = 1 ] || { echo '{"ok":0,"error":"The switch is disabled"}' >&2; exit 2; }
+    _found=0
+    for _s in $(profile_sections); do
+        if [ "$(profile_get "$_s" code)" = "$SW_CODE" ]; then _found=1; break; fi
+    done
+    [ "$_found" = 1 ] || { echo '{"ok":0,"error":"This profile code is not configured"}' >&2; exit 2; }
+    [ -x "$AT" ] || { echo '{"ok":0,"error":"The AT adapter is not available"}' >&2; exit 2; }
+    "$AT" --available >/dev/null 2>&1 || { echo '{"ok":0,"error":"The AT transport is not configured"}' >&2; exit 2; }
+    lock_acquire || { echo '{"ok":0,"error":"A switch is already running"}' >&2; exit 3; }
+    trap 'release_lock' EXIT INT TERM
+
+    SW_T0=$(now)
+    refresh
+    SW_FROM=$(st_get code)
+    if [ -n "$SW_FROM" ] && [ "$SW_FROM" = "$SW_CODE" ]; then
+        echo '{"ok":0,"error":"This profile is already active"}' >&2
+        exit 2
+    fi
+    SW_BEFORE_ICCID=$(st_get iccid)
+    SW_BEFORE_IMSI=$(st_get imsi)
+    : > "$LOG" 2>/dev/null
+    status_write request 0
+    say "switch $SW_CODE requested (from ${SW_FROM:-unknown})"
+
+    case $SWITCH_CMD in *%s*) ;; *) refuse 'The switch command has no %s placeholder' ;; esac
+    _cmd=$(printf '%s' "$SWITCH_CMD" | sed "s/%s/$SW_CODE/g")
+    _out=$(atq "$_cmd" 12)
+    if ! printf '%s\n' "$_out" | grep -q '^OK'; then
+        _err=$(printf '%s\n' "$_out" | grep -E '^\+CME ERROR|^\+CMS ERROR|^\+CPIN|^ERROR' | head -n 1)
+        [ -n "$_err" ] || _err='no answer'
+        refuse 'The modem refused the switch' "$_err"
+    fi
+
+    status_write sim_refresh 0
+    say "switch $SW_CODE accepted; waiting for the SIM to reload"
+    SW_AFTER=$(wait_identity "$WAIT_REFRESH" "$SW_BEFORE_ICCID" "$SW_BEFORE_IMSI") || SW_AFTER=
+
+    if [ -z "$SW_AFTER" ]; then
+        _resets=$(uci_get reset_commands)
+        if [ -n "$_resets" ]; then
+            status_write stack_restart 0
+            say "no reload after ${WAIT_REFRESH}s; running the configured reset commands"
+            for _c in $_resets; do
+                atq "$_c" 12 >/dev/null
+                nap 2
+            done
+            SW_AFTER=$(wait_identity "$WAIT_REFRESH" "$SW_BEFORE_ICCID" "$SW_BEFORE_IMSI") || SW_AFTER=
+        fi
+    fi
+    [ -n "$SW_AFTER" ] || refuse 'The SIM did not reload; the card may not offer this profile'
+
+    status_write reattach 0
+    say "new identity $SW_AFTER; waiting for registration"
+    _i=0
+    while [ "$_i" -lt "$WAIT_JOIN" ]; do
+        [ -n "$(read_cops)" ] && break
+        nap 2; _i=$((_i + 2))
+    done
+
+    if [ "$REDIAL" = 1 ]; then
+        ubus call "network.interface.$IFACE" down >/dev/null 2>&1
+        nap 1
+        ifup "$IFACE" >/dev/null 2>&1
+        wait_wan "$WAIT_WAN" || say "the data interface did not come back within ${WAIT_WAN}s"
+    fi
+
+    refresh
+    status_write done 1
+    say "switch $SW_CODE done: ${SW_FROM:-?} -> $SW_CODE"
+    _data=0; wan_up && _data=1
+    printf '{"ok":1,"phase":"done","from":%s,"to":%s,"before":%s,"after":%s,"elapsed":%d,"data":%d}\n' \
+        "$(json_str "$SW_FROM")" "$(json_str "$SW_CODE")" "$(json_str "$SW_BEFORE_ICCID")" \
+        "$(json_str "$SW_AFTER")" "$(( $(now) - SW_T0 ))" "$_data"
+}
+
+# ------------------------------------------------------------------ get
+cmd_get() {
+    local cached=0 age=-1
+    [ "${1:-}" = cached ] && cached=1
+    [ -s "$STATE/ts" ] && age=$(( $(now) - $(st_get ts) ))
+    if [ "$cached" = 1 ] && [ "$age" -ge 0 ] && [ "$age" -le "$CACHE_TTL" ] && [ "$(st_get read_ok)" = 1 ]; then
+        emit
+        return 0
+    fi
+    # never read the card while a switch is writing to it: the cached reading
+    # and the job state are enough for the page
+    if lock_live "$LOCK"; then
+        emit
+        return 0
+    fi
+    if ! mkdir "$GETLOCK" 2>/dev/null; then
+        emit
+        return 0
+    fi
+    trap 'rmdir "$GETLOCK" 2>/dev/null' EXIT INT TERM
+    refresh
+    rmdir "$GETLOCK" 2>/dev/null
+    trap - EXIT INT TERM
+    emit
+}
+
+cmd_status() { status_json; }
+
+cmd_log() {
+    [ -f "$LOG" ] || exit 0
+    tail -n "${1:-40}" "$LOG"
+}
+
+case ${1:-get} in
+    get)      shift; cmd_get "${1:-}" ;;
+    refresh)  cmd_get ;;
+    switch)   shift; cmd_switch "${1:-}" ;;
+    status)   cmd_status ;;
+    log)      shift; cmd_log "${1:-40}" ;;
+    *)
+        cat >&2 <<'EOF'
+usage: simswitch get [cached] | switch CODE | status | log [N]
+  CODE  a four-digit profile code configured in /etc/config/simswitch
+EOF
+        exit 2 ;;
+esac

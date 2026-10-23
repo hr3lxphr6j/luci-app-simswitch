@@ -1,0 +1,18 @@
+{
+	"luci-app-simswitch": {
+		"description": "Switch between the operator profiles stored on a SIM card",
+		"read": {
+			"ubus": {
+				"simswitch": [ "get", "job" ]
+			},
+			"uci": {
+				"simswitch": [ "*" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"simswitch": [ "switch" ]
+			}
+		}
+	}
+}

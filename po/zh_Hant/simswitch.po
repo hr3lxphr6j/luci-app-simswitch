@@ -1,0 +1,109 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_Hant\n"
+
+msgid "Sending the request…"
+msgstr "正在傳送請求…"
+
+msgid "Waiting for the SIM to reload…"
+msgstr "正在等待 SIM 卡重新載入…"
+
+msgid "Restarting the modem interface…"
+msgstr "正在重新啟動模組介面…"
+
+msgid "Waiting for the network…"
+msgstr "正在等待網路…"
+
+msgid "Done"
+msgstr "完成"
+
+msgid "Failed"
+msgstr "失敗"
+
+msgid "Working…"
+msgstr "處理中…"
+
+msgid "The modem refused the switch"
+msgstr "模組拒絕了切換"
+
+msgid "The SIM did not reload; the card may not offer this profile"
+msgstr "SIM 卡沒有重新載入；這張卡可能不支援該 profile"
+
+msgid "The switch was interrupted"
+msgstr "切換被中斷"
+
+msgid "A switch is already running"
+msgstr "已有切換工作在執行"
+
+msgid "The AT transport is not configured"
+msgstr "AT 通道未設定"
+
+msgid "This profile is already active"
+msgstr "該 profile 已處於活動狀態"
+
+msgid "unknown reason"
+msgstr "未知原因"
+
+msgid "SIM profiles"
+msgstr "SIM 設定"
+
+msgid "Switch between the operator profiles stored on the SIM card. The switch runs locally on the router."
+msgstr "在 SIM 卡內儲存的多個電信業者 profile 之間切換。切換在路由器本機完成。"
+
+msgid "The switch backend is unavailable: %s"
+msgstr "切換後端無法使用：%s"
+
+msgid "No profiles are configured. Add one or more profile sections to /etc/config/simswitch."
+msgstr "尚未設定任何 profile。請在 /etc/config/simswitch 中新增一個或多個 profile 區段。"
+
+msgid "The switch is disabled in /etc/config/simswitch."
+msgstr "切換已在 /etc/config/simswitch 中停用。"
+
+msgid "Current profile"
+msgstr "目前設定"
+
+msgid "Profile"
+msgstr "設定"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Network"
+msgstr "網路"
+
+msgid "SIM state"
+msgstr "SIM 狀態"
+
+msgid "Switched to %s in %s s."
+msgstr "已切換到 %s，耗時 %s 秒。"
+
+msgid "Mobile data is back."
+msgstr "行動數據已恢復。"
+
+msgid "Mobile data has not come back yet."
+msgstr "行動數據尚未恢復。"
+
+msgid "The switch failed: %s"
+msgstr "切換失敗：%s"
+
+msgid "Available profiles"
+msgstr "可用設定"
+
+msgid "Only configured profiles are shown. A wrong profile code can lock the SIM; use only codes provided by your operator."
+msgstr "只顯示已設定的 profile。錯誤的 profile code 可能導致 SIM 卡鎖定；請只使用電信業者提供的 code。"
+
+msgid "Switch to %s?"
+msgstr "切換到 %s？"
+
+msgid "The device will lose connectivity for 10–40 seconds while the modem registers on the new profile."
+msgstr "裝置將中斷網路 10–40 秒，期間模組會在新 profile 上重新註冊。"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "The switch could not be started: %s"
+msgstr "無法啟動切換：%s"
+
+msgid "Switch"
+msgstr "切換"

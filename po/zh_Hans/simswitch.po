@@ -1,0 +1,109 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_Hans\n"
+
+msgid "Sending the request…"
+msgstr "正在发送请求…"
+
+msgid "Waiting for the SIM to reload…"
+msgstr "正在等待 SIM 卡重新加载…"
+
+msgid "Restarting the modem interface…"
+msgstr "正在重启模组接口…"
+
+msgid "Waiting for the network…"
+msgstr "正在等待网络…"
+
+msgid "Done"
+msgstr "完成"
+
+msgid "Failed"
+msgstr "失败"
+
+msgid "Working…"
+msgstr "处理中…"
+
+msgid "The modem refused the switch"
+msgstr "模组拒绝了切换"
+
+msgid "The SIM did not reload; the card may not offer this profile"
+msgstr "SIM 卡没有重新加载；这张卡可能不支持该 profile"
+
+msgid "The switch was interrupted"
+msgstr "切换被中断"
+
+msgid "A switch is already running"
+msgstr "已有切换任务在运行"
+
+msgid "The AT transport is not configured"
+msgstr "AT 通道未配置"
+
+msgid "This profile is already active"
+msgstr "该 profile 已处于活动状态"
+
+msgid "unknown reason"
+msgstr "未知原因"
+
+msgid "SIM profiles"
+msgstr "SIM 配置"
+
+msgid "Switch between the operator profiles stored on the SIM card. The switch runs locally on the router."
+msgstr "在 SIM 卡内存储的多个运营商 profile 之间切换。切换在路由器本地完成。"
+
+msgid "The switch backend is unavailable: %s"
+msgstr "切换后端不可用：%s"
+
+msgid "No profiles are configured. Add one or more profile sections to /etc/config/simswitch."
+msgstr "尚未配置任何 profile。请在 /etc/config/simswitch 中添加一个或多个 profile 段。"
+
+msgid "The switch is disabled in /etc/config/simswitch."
+msgstr "切换已在 /etc/config/simswitch 中禁用。"
+
+msgid "Current profile"
+msgstr "当前配置"
+
+msgid "Profile"
+msgstr "配置"
+
+msgid "Unknown"
+msgstr "未知"
+
+msgid "Network"
+msgstr "网络"
+
+msgid "SIM state"
+msgstr "SIM 状态"
+
+msgid "Switched to %s in %s s."
+msgstr "已切换到 %s，耗时 %s 秒。"
+
+msgid "Mobile data is back."
+msgstr "移动数据已恢复。"
+
+msgid "Mobile data has not come back yet."
+msgstr "移动数据尚未恢复。"
+
+msgid "The switch failed: %s"
+msgstr "切换失败：%s"
+
+msgid "Available profiles"
+msgstr "可用配置"
+
+msgid "Only configured profiles are shown. A wrong profile code can lock the SIM; use only codes provided by your operator."
+msgstr "只显示已配置的 profile。错误的 profile code 可能导致 SIM 卡锁定；请只使用运营商提供的 code。"
+
+msgid "Switch to %s?"
+msgstr "切换到 %s？"
+
+msgid "The device will lose connectivity for 10–40 seconds while the modem registers on the new profile."
+msgstr "设备将断网 10–40 秒，期间模组会在新 profile 上重新注册。"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "The switch could not be started: %s"
+msgstr "无法启动切换：%s"
+
+msgid "Switch"
+msgstr "切换"

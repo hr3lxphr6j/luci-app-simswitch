@@ -1,0 +1,36 @@
+config simswitch 'main'
+	option enabled '1'
+	option iface 'wan'
+	option redial '1'
+
+	# AT transport: at_backend 'atinout' with at_port, or 'custom' with
+	# at_command (called as PROGRAM TIMEOUT COMMAND). 'auto' picks custom
+	# when at_command is set, else atinout when available.
+	option at_backend 'auto'
+	option at_port ''
+	option at_command ''
+
+	# The command that selects a profile; %s is replaced by the code.
+	option switch_command 'AT+CLCK="SC",1,"%s"'
+
+	# Optional commands run when the SIM does not reload by itself.
+	list reset_commands
+
+	option wait_refresh '45'
+	option wait_join '60'
+	option wait_wan '60'
+	option cache_ttl '120'
+
+# One section per profile. CODE is the four-digit code the card or operator
+# provides. MATCH is an optional comma-separated list of glob patterns used to
+# recognise the active profile from ICCID, IMSI or the network name.
+#
+# config profile 'first'
+# 	option code '0000'
+# 	option label 'First operator'
+# 	option match '000000*,00000*'
+#
+# config profile 'second'
+# 	option code '0001'
+# 	option label 'Second operator'
+# 	option match '000001*,00001*'

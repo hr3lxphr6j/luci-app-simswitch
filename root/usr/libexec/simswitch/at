@@ -1,0 +1,61 @@
+#!/bin/sh
+# simswitch-at -- one AT command over the configured transport.
+#
+#   simswitch-at [-t SECONDS] [--available] CMD
+#
+# Backends, from /etc/config/simswitch:
+#   at_backend 'custom'  at_command PROGRAM: PROGRAM -t TIMEOUT CMD
+#   at_backend 'atinout' at_port TTY: atinout on the tty
+#   at_backend 'auto'    custom when set, else atinout when available
+#
+# One command per call: a CR or LF inside it would reach the modem as a
+# second command.
+
+SELF=${0%/*}
+LIB=$SELF/../../share/simswitch/lib.sh
+[ -f "$LIB" ] || LIB=/usr/share/simswitch/lib.sh
+. "$LIB"
+
+available=0
+[ "${1:-}" = --available ] && { available=1; shift; }
+timeout=8
+[ "${1:-}" = -t ] && { timeout=${2:-8}; shift 2; }
+cmd=${1:-}
+[ "$available" = 1 ] || [ -n "$cmd" ] || { echo "simswitch-at: command required" >&2; exit 2; }
+case $cmd in *"$(printf '\r')"*|*'
+'*) echo "simswitch-at: one command per call (no CR or LF)" >&2; exit 2 ;; esac
+case $timeout in ''|*[!0-9]*) timeout=8 ;; esac
+
+backend=$(uci_get at_backend); backend=${backend:-auto}
+port=$(safe_tty "$(uci_get at_port)" '')
+custom=$(safe_program "$(uci_get at_command)")
+
+case $backend in
+    auto)
+        if [ -n "$custom" ]; then backend=custom
+        elif command -v atinout >/dev/null 2>&1 && [ -n "$port" ] && [ -c "$port" ]; then backend=atinout
+        else echo "simswitch-at: no AT transport configured" >&2; exit 127
+        fi
+        ;;
+esac
+
+case $backend in
+    atinout)
+        [ -n "$port" ] && [ -c "$port" ] || { echo "simswitch-at: AT port is unavailable" >&2; exit 1; }
+        [ "$available" = 0 ] || exit 0
+        lock=/var/lock/simswitch-at.lock
+        n=0
+        while ! mkdir "$lock" 2>/dev/null; do
+            n=$((n + 1)); [ "$n" -ge "$timeout" ] && { echo "simswitch-at: busy" >&2; exit 1; }
+            sleep 1
+        done
+        trap 'rmdir "$lock" 2>/dev/null' EXIT INT TERM
+        printf '%s\r' "$cmd" | timeout "$timeout" atinout - "$port" -
+        ;;
+    custom)
+        [ -n "$custom" ] || { echo "simswitch-at: at_command must be an executable path" >&2; exit 127; }
+        [ "$available" = 0 ] || exit 0
+        exec "$custom" -t "$timeout" "$cmd"
+        ;;
+    *) echo "simswitch-at: unknown transport $backend" >&2; exit 2 ;;
+esac
