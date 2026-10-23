@@ -35,7 +35,21 @@ OpenWrt / LuCI 的多 profile SIM 卡切换工具。
 - 不做自动重试；同一时间只允许一个切换任务
 - 切换会断网 10–40 秒（模组重新注册 + WAN 重拨），属正常现象
 
-## 安装
+## 从 Releases 安装
+
+GitHub Releases 同时提供 `.ipk`（opkg）和 `.apk`（apk）两个包。两者都是
+`PKGARCH:=all`，与 CPU 架构无关；按固件的包管理器选一个即可。
+
+| 固件 | 包 | 安装 |
+| --- | --- | --- |
+| OpenWrt 24.10 及更早（opkg） | `.ipk` | `opkg update && opkg install ./luci-app-simswitch_*.ipk` |
+| OpenWrt 25.12 及更新（apk） | `.apk` | `apk update && apk add --allow-untrusted ./luci-app-simswitch-*.apk` |
+
+本地包没有签名，所以 apk 需要 `--allow-untrusted`。依赖会从固件源解析；
+如果固件没有 `luci-base`，先安装它。安装后刷新 LuCI，菜单在
+**Cellular → SIM profiles**。
+
+## 从源码编译
 
 把本目录放进 OpenWrt 的 package feed，或在 OpenWrt SDK 的 `package/`
 下建立指向本目录的链接，选中 `luci-app-simswitch` 编译安装。
@@ -128,6 +142,7 @@ htdocs/luci-static/resources/view/simswitch/ LuCI 页面
 po/                                          zh_Hans / zh_Hant 翻译
 tests/                                       单元测试
 tools/deploy.sh                              开发用部署脚本
+.github/workflows/release.yml                CI：构建并在 Release 中发布 ipk/apk
 ```
 
 ## 测试
@@ -151,12 +166,32 @@ tools/deploy.sh root@192.168.1.1
 `simswitch get`（只读），不会切换 profile。已有 `/etc/config/simswitch`
 不会被覆盖；要替换配置就把配置文件作为第二个参数传入。
 
+## 发布（CI）
+
+推送 `v*` tag 时，`.github/workflows/release.yml` 会并行构建两个包，并把它们
+和 `SHA256SUMS` 一起作为 GitHub Release 资产发布：
+
+- `.ipk`：OpenWrt 24.10.4 SDK（x86/64，`PKGARCH:=all`）
+- `.apk`：OpenWrt 25.12.5 SDK（x86/64，`PKGARCH:=all`）
+
+tag 必须与 `Makefile` 里的 `PKG_VERSION` 一致：
+
+```sh
+git tag v0.1.0
+git push origin main v0.1.0
+```
+
+`workflow_dispatch` 只构建并上传 Actions artifacts，不创建 Release；适合在
+发版前验证构建。SDK 下载优先用 `downloads.openwrt.org`，失败时回退到清华
+镜像；apk 构建在 25.12 SDK 不可用时回退到 snapshot SDK。
+
 ## 状态
 
 - [x] 包骨架：adapter / rpcd / ACL / 菜单 / LuCI / CLI
 - [x] 单元测试
-- [ ] 在真实设备上安装回归
+- [x] 在真实设备上安装回归
 - [x] i18n：zh_Hans / zh_Hant（页面跟随 LuCI 语言）
+- [x] CI 打包：ipk + apk
 - [ ] 发布
 
 ## 许可
