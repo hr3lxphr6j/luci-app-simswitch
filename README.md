@@ -37,6 +37,8 @@ OpenWrt / LuCI 的多 profile SIM 卡切换工具。
 
 ## 从 Releases 安装
 
+发布页：<https://github.com/hr3lxphr6j/luci-app-simswitch/releases>
+
 GitHub Releases 同时提供 `.ipk`（opkg）和 `.apk`（apk）两个包。两者都是
 `PKGARCH:=all`，与 CPU 架构无关；按固件的包管理器选一个即可。
 
@@ -192,7 +194,7 @@ git push origin main v0.1.0
 - [x] 在真实设备上安装回归
 - [x] i18n：zh_Hans / zh_Hant（页面跟随 LuCI 语言）
 - [x] CI 打包：ipk + apk
-- [ ] 发布
+- [x] 发布：v0.1.0
 
 ## 许可
 
