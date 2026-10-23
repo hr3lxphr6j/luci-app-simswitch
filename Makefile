@@ -3,7 +3,6 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-simswitch
 PKG_VERSION:=0.1.0
 PKG_RELEASE:=1
-PKGARCH:=all
 # po2lmo, built by luci-base for the host
 PKG_BUILD_DEPENDS:=luci-base/host
 
@@ -14,6 +13,7 @@ define Package/luci-app-simswitch
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=SIM profile switcher
+  PKGARCH:=all
   DEPENDS:=+luci-base +rpcd +ubus +jsonfilter +uci
 endef
 
