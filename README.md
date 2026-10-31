@@ -194,7 +194,7 @@ git push origin main v0.1.0
 - [x] 在真实设备上安装回归
 - [x] i18n：zh_Hans / zh_Hant（页面跟随 LuCI 语言）
 - [x] CI 打包：ipk + apk
-- [x] 发布：v0.1.0
+- [x] 发布：v0.1.1
 
 ## 许可
 
