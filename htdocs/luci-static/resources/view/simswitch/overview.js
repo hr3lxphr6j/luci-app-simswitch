@@ -197,7 +197,7 @@ return view.extend({
 							});
 						});
 					}
-				}, [ _('Switch') ])
+				}, [ _('Switch now') ])
 			])
 		]);
 	},

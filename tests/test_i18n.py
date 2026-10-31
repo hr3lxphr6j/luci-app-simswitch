@@ -49,6 +49,13 @@ class I18n(unittest.TestCase):
         b = set(entries(LANGS[1]))
         self.assertEqual(a, b)
 
+    def test_no_msgid_shadows_luci_base(self):
+        # LuCI merges every installed catalog into one table, and the
+        # client-side window.TR object keeps the last duplicate key. A msgid
+        # that also exists in luci-base therefore gets base's translation:
+        # base maps "Switch" to the network switch (交换机), not to the verb.
+        self.assertNotIn('Switch', messages())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -105,5 +105,5 @@ msgstr "取消"
 msgid "The switch could not be started: %s"
 msgstr "无法启动切换：%s"
 
-msgid "Switch"
-msgstr "切换"
+msgid "Switch now"
+msgstr "立即切换"
